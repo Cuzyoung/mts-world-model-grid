@@ -1,0 +1,21 @@
+# ETTm1 configuration
+dataset: ETTm1
+data_root: data
+model: mts_wm
+
+seq_len: 96
+pred_len: 96
+d_input: 7
+batch_size: 32
+
+d_model: 128
+d_latent: 64
+n_heads: 4
+n_layers: 2
+patch_size: 16
+slow_interval: 4
+
+lr: 0.001
+epochs: 50
+patience: 10
+kl_weight: 0.01
