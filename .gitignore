@@ -1,5 +1,9 @@
 data/
-checkpoints/
+TSLib/dataset/
+TSLib/checkpoints/
+TSLib/results/
+TSLib/test_results/
+TSLib/logs/
 __pycache__/
 *.pyc
 *.egg-info/

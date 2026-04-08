@@ -1,9 +1,0 @@
-{
-  "model": "mts_wm",
-  "dataset": "ETTh1",
-  "pred_len": 720,
-  "seq_len": 96,
-  "test_mse": 1.3772183656692505,
-  "test_mae": 0.9019564986228943,
-  "params": 508528
-}
