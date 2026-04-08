@@ -12,11 +12,11 @@ import os
 import sys
 import json
 import time
+import logging
 
 import torch
 import torch.nn as nn
 import numpy as np
-from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,7 +25,7 @@ from src.metrics import compute_metrics
 from src.utils import load_config, set_seed, get_device, count_parameters, ensure_dir
 from src.models.world_model import (
     MTSWorldModel, SingleScaleWorldModel,
-    NoSlowDynamicsModel, NoFastDynamicsModel,
+    NoSlowDynamicsModel, NoFastDynamicsModel, NoDirect,
 )
 from src.models.baselines import LSTMBaseline, DLinearBaseline, InformerBaseline
 
@@ -35,10 +35,32 @@ MODEL_REGISTRY = {
     "single_scale": SingleScaleWorldModel,
     "no_slow": NoSlowDynamicsModel,
     "no_fast": NoFastDynamicsModel,
+    "no_direct": NoDirect,
     "lstm": LSTMBaseline,
     "dlinear": DLinearBaseline,
     "informer": InformerBaseline,
 }
+
+
+def setup_logger(log_path):
+    """Setup logger that writes to both file and console."""
+    logger = logging.getLogger("mts_wm")
+    logger.setLevel(logging.INFO)
+    logger.handlers = []
+
+    fmt = logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    # File handler
+    fh = logging.FileHandler(log_path, mode="w")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    # Console handler
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+
+    return logger
 
 
 def build_model(config):
@@ -108,33 +130,54 @@ def main():
     model_name = config.get("model", "mts_wm")
     dataset = config["dataset"]
     pred_len = config["pred_len"]
+    seq_len = config["seq_len"]
 
-    print(f"=== Training {model_name} on {dataset}, pred_len={pred_len} ===")
+    # --- Setup directories ---
+    exp_name = f"{dataset}_{model_name}_seq{seq_len}_pred{pred_len}"
+    log_dir = os.path.join("logs", dataset, model_name)
+    result_dir = os.path.join("results", dataset, model_name)
+    ckpt_dir = os.path.join("checkpoints", dataset, model_name)
+    ensure_dir(log_dir)
+    ensure_dir(result_dir)
+    ensure_dir(ckpt_dir)
 
-    # Data
+    # --- Logger ---
+    log_path = os.path.join(log_dir, f"pred{pred_len}.log")
+    logger = setup_logger(log_path)
+
+    logger.info("=" * 60)
+    logger.info(f"Experiment: {exp_name}")
+    logger.info("=" * 60)
+    logger.info(f"Config: {json.dumps(config, indent=2)}")
+    logger.info(f"Device: {device}")
+
+    # --- Data ---
     train_loader, val_loader, test_loader, scaler = get_data_loaders(config)
-    print(f"Train batches: {len(train_loader)}, Val: {len(val_loader)}, Test: {len(test_loader)}")
+    logger.info(f"Data loaded: train={len(train_loader)} batches, val={len(val_loader)}, test={len(test_loader)}")
 
-    # Model
+    # --- Model ---
     model = build_model(config).to(device)
-    print(f"Model parameters: {count_parameters(model):,}")
+    n_params = count_parameters(model)
+    logger.info(f"Model: {model_name}, Parameters: {n_params:,}")
 
-    # Training
-    lr = config.get("lr", 1e-3)
-    epochs = config.get("epochs", 50)
+    # --- Training ---
+    lr = config.get("lr", 1e-4)
+    epochs = config.get("epochs", 100)
     patience = config.get("patience", 10)
-    kl_weight = config.get("kl_weight", 0.01)
+    kl_weight = config.get("kl_weight", 0.001)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    best_val_loss = float("inf")
+    best_val_mse = float("inf")
+    best_val_mae = float("inf")
     patience_counter = 0
-
-    # Checkpoint path
-    ckpt_dir = os.path.join("checkpoints", f"{dataset}_{model_name}")
-    ensure_dir(ckpt_dir)
     ckpt_path = os.path.join(ckpt_dir, f"pred{pred_len}_best.pt")
+
+    logger.info(f"Training: epochs={epochs}, lr={lr}, patience={patience}, kl_weight={kl_weight}")
+    logger.info("-" * 60)
+
+    train_start = time.time()
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
@@ -143,41 +186,81 @@ def main():
         scheduler.step()
 
         elapsed = time.time() - t0
-        print(f"Epoch {epoch:3d}/{epochs} | train_loss={train_loss:.4f} | "
-              f"val_mse={val_metrics['mse']:.4f} val_mae={val_metrics['mae']:.4f} | "
-              f"{elapsed:.1f}s")
+        lr_now = optimizer.param_groups[0]["lr"]
 
-        if val_metrics["mse"] < best_val_loss:
-            best_val_loss = val_metrics["mse"]
+        logger.info(
+            f"Epoch {epoch:3d}/{epochs} | "
+            f"train_loss={train_loss:.6f} | "
+            f"val_mse={val_metrics['mse']:.6f} val_mae={val_metrics['mae']:.6f} | "
+            f"lr={lr_now:.2e} | {elapsed:.1f}s"
+        )
+
+        if val_metrics["mse"] < best_val_mse:
+            best_val_mse = val_metrics["mse"]
+            best_val_mae = val_metrics["mae"]
             patience_counter = 0
             torch.save(model.state_dict(), ckpt_path)
+            logger.info(f"  -> New best val_mse={best_val_mse:.6f}, checkpoint saved.")
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"Early stopping at epoch {epoch}")
+                logger.info(f"Early stopping at epoch {epoch}")
                 break
 
-    # Test
-    model.load_state_dict(torch.load(ckpt_path, weights_only=True))
-    test_metrics, _, _ = evaluate(model, test_loader, device)
-    print(f"\n=== Test Results: MSE={test_metrics['mse']:.4f}, MAE={test_metrics['mae']:.4f} ===")
+    train_time = time.time() - train_start
+    logger.info("-" * 60)
+    logger.info(f"Training finished in {train_time:.1f}s ({train_time/60:.1f}min)")
+    logger.info(f"Best val_mse={best_val_mse:.6f}, val_mae={best_val_mae:.6f}")
 
-    # Save results
-    result_dir = os.path.join("results", dataset)
-    ensure_dir(result_dir)
-    result_path = os.path.join(result_dir, f"{model_name}_pred{pred_len}.json")
-    result = {
+    # --- Save val results ---
+    val_result = {
         "model": model_name,
         "dataset": dataset,
+        "seq_len": seq_len,
         "pred_len": pred_len,
-        "seq_len": config["seq_len"],
+        "best_val_mse": best_val_mse,
+        "best_val_mae": best_val_mae,
+        "train_time_sec": round(train_time, 1),
+        "params": n_params,
+    }
+    val_result_path = os.path.join(result_dir, f"pred{pred_len}_val.json")
+    with open(val_result_path, "w") as f:
+        json.dump(val_result, f, indent=2)
+    logger.info(f"Val results saved to {val_result_path}")
+
+    # --- Test ---
+    logger.info("=" * 60)
+    logger.info("Testing on best checkpoint...")
+    model.load_state_dict(torch.load(ckpt_path, weights_only=True))
+    test_metrics, test_preds, test_trues = evaluate(model, test_loader, device)
+    logger.info(f"TEST RESULTS: MSE={test_metrics['mse']:.6f}, MAE={test_metrics['mae']:.6f}")
+
+    # --- Save test results ---
+    test_result = {
+        "model": model_name,
+        "dataset": dataset,
+        "seq_len": seq_len,
+        "pred_len": pred_len,
         "test_mse": test_metrics["mse"],
         "test_mae": test_metrics["mae"],
-        "params": count_parameters(model),
+        "best_val_mse": best_val_mse,
+        "best_val_mae": best_val_mae,
+        "train_time_sec": round(train_time, 1),
+        "params": n_params,
+        "config": config,
     }
-    with open(result_path, "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"Results saved to {result_path}")
+    test_result_path = os.path.join(result_dir, f"pred{pred_len}_test.json")
+    with open(test_result_path, "w") as f:
+        json.dump(test_result, f, indent=2)
+    logger.info(f"Test results saved to {test_result_path}")
+
+    # --- Save predictions (for later analysis) ---
+    np.save(os.path.join(result_dir, f"pred{pred_len}_preds.npy"), test_preds)
+    np.save(os.path.join(result_dir, f"pred{pred_len}_trues.npy"), test_trues)
+    logger.info(f"Predictions saved: preds={test_preds.shape}, trues={test_trues.shape}")
+
+    logger.info("=" * 60)
+    logger.info("DONE")
 
 
 if __name__ == "__main__":

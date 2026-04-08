@@ -20,18 +20,16 @@ class PatchEmbedding(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.proj = nn.Linear(patch_size * d_input, d_model)
-        self.pos_embed = None  # lazily initialized
+        self.norm = nn.LayerNorm(d_model)
+        self.pos_embed = None
 
     def forward(self, x):
-        # x: (B, L, D)
         B, L, D = x.shape
         P = self.patch_size
         num_patches = L // P
-        x = x[:, :num_patches * P, :]  # trim to multiple of P
-        x = x.reshape(B, num_patches, P * D)  # (B, N, P*D)
-        x = self.proj(x)  # (B, N, d_model)
+        x = x[:, :num_patches * P, :].reshape(B, num_patches, P * D)
+        x = self.norm(self.proj(x))
 
-        # positional embedding
         if self.pos_embed is None or self.pos_embed.size(1) != num_patches:
             self.pos_embed = self._sinusoidal_pe(num_patches, x.size(-1)).to(x.device)
         x = x + self.pos_embed[:num_patches].unsqueeze(0)
@@ -61,19 +59,14 @@ class MultiScaleDynamics(nn.Module):
         self.d_latent = d_latent
         self.slow_interval = slow_interval
 
-        # Fast dynamics: step-by-step GRU
         self.fast_gru = nn.GRUCell(d_latent, d_latent)
-
-        # Slow dynamics: updates every K steps
         self.slow_gru = nn.GRUCell(d_latent, d_latent)
 
-        # Fusion gate: combine fast and slow
         self.gate = nn.Sequential(
             nn.Linear(d_latent * 2, d_latent),
             nn.Sigmoid(),
         )
 
-        # Latent prior (for regularization)
         self.prior_mean = nn.Linear(d_latent, d_latent)
         self.prior_logvar = nn.Linear(d_latent, d_latent)
 
@@ -81,42 +74,33 @@ class MultiScaleDynamics(nn.Module):
         """
         Roll out latent dynamics for num_steps.
 
-        Args:
-            z_init: (B, d_latent) initial latent state
-            num_steps: number of future steps to predict
-
         Returns:
             z_seq: (B, num_steps, d_latent) predicted latent trajectory
             kl_loss: KL regularization loss
         """
-        B = z_init.size(0)
         z_fast = z_init
         z_slow = z_init
         z_seq = []
         kl_loss = 0.0
 
         for t in range(num_steps):
-            # Fast dynamics: always update
             z_fast = self.fast_gru(z_fast, z_fast)
 
-            # Slow dynamics: update every K steps
             if t % self.slow_interval == 0:
                 z_slow = self.slow_gru(z_slow, z_slow)
 
-            # Fuse fast and slow
             gate = self.gate(torch.cat([z_fast, z_slow], dim=-1))
             z_fused = gate * z_fast + (1 - gate) * z_slow
 
-            # Latent prior regularization (encourage structured latent space)
             prior_mu = self.prior_mean(z_fused)
             prior_logvar = self.prior_logvar(z_fused)
             kl = -0.5 * torch.mean(1 + prior_logvar - prior_mu.pow(2) - prior_logvar.exp())
             kl_loss = kl_loss + kl
 
             z_seq.append(z_fused)
-            z_fast = z_fused  # feed back
+            z_fast = z_fused
 
-        z_seq = torch.stack(z_seq, dim=1)  # (B, num_steps, d_latent)
+        z_seq = torch.stack(z_seq, dim=1)
         kl_loss = kl_loss / num_steps
         return z_seq, kl_loss
 
@@ -136,13 +120,15 @@ class MTSWorldModel(nn.Module):
         self.seq_len = config["seq_len"]
         self.pred_len = config["pred_len"]
         self.d_input = config["d_input"]
-        d_model = config.get("d_model", 128)
-        d_latent = config.get("d_latent", 64)
-        n_heads = config.get("n_heads", 4)
-        n_layers = config.get("n_layers", 2)
+        d_model = config.get("d_model", 512)
+        d_latent = config.get("d_latent", 256)
+        n_heads = config.get("n_heads", 8)
+        n_layers = config.get("n_layers", 4)
         patch_size = config.get("patch_size", 16)
         slow_interval = config.get("slow_interval", 4)
+        dropout = config.get("dropout", 0.2)
         self.d_latent = d_latent
+        self.patch_size = patch_size
 
         # 1. Patch embedding
         self.patch_embed = PatchEmbedding(patch_size, self.d_input, d_model)
@@ -150,25 +136,35 @@ class MTSWorldModel(nn.Module):
         # 2. Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=n_heads, dim_feedforward=d_model * 4,
-            dropout=0.1, activation="gelu", batch_first=True,
+            dropout=dropout, activation="gelu", batch_first=True,
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.enc_dropout = nn.Dropout(dropout)
 
-        # 3. Latent projection
-        self.to_latent = nn.Linear(d_model, d_latent)
+        # 3. Latent projection — use pooled encoder output instead of just last patch
+        self.to_latent = nn.Sequential(
+            nn.Linear(d_model, d_latent),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_latent, d_latent),
+        )
 
         # 4. Multi-scale dynamics
         num_pred_patches = max(1, self.pred_len // patch_size)
         self.dynamics = MultiScaleDynamics(d_latent, slow_interval=slow_interval)
         self.num_pred_steps = num_pred_patches
 
-        # 5. Decoder
+        # 5. Decoder — stronger decoder with residual
         self.decoder = nn.Sequential(
             nn.Linear(d_latent, d_model),
             nn.GELU(),
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
             nn.Linear(d_model, patch_size * self.d_input),
         )
-        self.patch_size = patch_size
+
+        # 6. Direct prediction head (residual shortcut for better gradient flow)
+        self.direct_pred = nn.Linear(self.seq_len, self.pred_len)
 
     def forward(self, x):
         """
@@ -181,26 +177,32 @@ class MTSWorldModel(nn.Module):
         """
         B = x.size(0)
 
-        # Encode
-        patches = self.patch_embed(x)  # (B, num_patches, d_model)
-        h = self.encoder(patches)  # (B, num_patches, d_model)
+        # Direct prediction path (residual)
+        direct = self.direct_pred(x.permute(0, 2, 1)).permute(0, 2, 1)  # (B, pred_len, d_input)
 
-        # Project to latent (use last patch as initial state)
-        z_init = self.to_latent(h[:, -1, :])  # (B, d_latent)
+        # World model path
+        patches = self.patch_embed(x)
+        h = self.enc_dropout(self.encoder(patches))
+
+        # Pool all patches (mean pooling) for richer initial state
+        z_init = self.to_latent(h.mean(dim=1))
 
         # Roll out dynamics
         z_seq, kl_loss = self.dynamics(z_init, self.num_pred_steps)
 
         # Decode
-        decoded = self.decoder(z_seq)  # (B, num_pred_steps, patch_size * d_input)
-        decoded = decoded.reshape(B, -1, self.d_input)  # (B, num_pred_steps * patch_size, d_input)
+        decoded = self.decoder(z_seq)
+        decoded = decoded.reshape(B, -1, self.d_input)
 
         # Trim or pad to pred_len
         if decoded.size(1) >= self.pred_len:
-            pred = decoded[:, :self.pred_len, :]
+            wm_pred = decoded[:, :self.pred_len, :]
         else:
             pad = torch.zeros(B, self.pred_len - decoded.size(1), self.d_input, device=x.device)
-            pred = torch.cat([decoded, pad], dim=1)
+            wm_pred = torch.cat([decoded, pad], dim=1)
+
+        # Combine: world model prediction + direct residual
+        pred = wm_pred + direct
 
         return pred, kl_loss
 
@@ -213,7 +215,6 @@ class SingleScaleWorldModel(MTSWorldModel):
     def __init__(self, config):
         super().__init__(config)
         d_latent = config.get("d_latent", 64)
-        # Replace multi-scale with single GRU
         self.dynamics = SingleScaleDynamics(d_latent)
 
 
@@ -281,3 +282,22 @@ class SlowOnlyDynamics(nn.Module):
             z_seq.append(z)
         z_seq = torch.stack(z_seq, dim=1)
         return z_seq, torch.tensor(0.0, device=z_init.device)
+
+
+class NoDirect(MTSWorldModel):
+    """Ablation: remove direct prediction shortcut."""
+
+    def forward(self, x):
+        B = x.size(0)
+        patches = self.patch_embed(x)
+        h = self.encoder(patches)
+        z_init = self.to_latent(h.mean(dim=1))
+        z_seq, kl_loss = self.dynamics(z_init, self.num_pred_steps)
+        decoded = self.decoder(z_seq)
+        decoded = decoded.reshape(B, -1, self.d_input)
+        if decoded.size(1) >= self.pred_len:
+            pred = decoded[:, :self.pred_len, :]
+        else:
+            pad = torch.zeros(B, self.pred_len - decoded.size(1), self.d_input, device=x.device)
+            pred = torch.cat([decoded, pad], dim=1)
+        return pred, kl_loss

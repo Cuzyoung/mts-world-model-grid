@@ -1,10 +1,10 @@
 data/
 checkpoints/
-results/
 __pycache__/
 *.pyc
 *.egg-info/
 .venv/
 *.pt
 *.pth
+*.npy
 wandb/

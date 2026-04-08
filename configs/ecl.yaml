@@ -1,21 +1,22 @@
-# ECL configuration
+# ECL (Electricity) configuration — aligned with PatchTST (ICLR 2023) settings
 dataset: ECL
 data_root: data
 model: mts_wm
 
-seq_len: 96
+seq_len: 336
 pred_len: 96
 d_input: 321
-batch_size: 16
+batch_size: 32
 
-d_model: 256
-d_latent: 128
-n_heads: 4
-n_layers: 2
+d_model: 512
+d_latent: 256
+n_heads: 8
+n_layers: 4
 patch_size: 16
 slow_interval: 4
+dropout: 0.2
 
-lr: 0.0005
-epochs: 50
+lr: 0.0001
+epochs: 100
 patience: 10
-kl_weight: 0.01
+kl_weight: 0.001

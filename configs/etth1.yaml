@@ -1,24 +1,25 @@
-# ETTh1 configuration
+# ETTh1 configuration — aligned with PatchTST (ICLR 2023) settings
 dataset: ETTh1
 data_root: data
 model: mts_wm
 
-# Data
-seq_len: 96
+# Data (PatchTST uses seq_len=336 for all ETT datasets)
+seq_len: 336
 pred_len: 96
 d_input: 7
-batch_size: 32
+batch_size: 128
 
-# Model
-d_model: 128
-d_latent: 64
-n_heads: 4
-n_layers: 2
+# Model (~14.4M params)
+d_model: 512
+d_latent: 256
+n_heads: 8
+n_layers: 4
 patch_size: 16
 slow_interval: 4
+dropout: 0.3
 
 # Training
-lr: 0.001
-epochs: 50
+lr: 0.0001
+epochs: 100
 patience: 10
-kl_weight: 0.01
+kl_weight: 0.001
