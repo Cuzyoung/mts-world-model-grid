@@ -4,13 +4,15 @@ PatchTST-Dreamer: PatchTST encoder + Multi-Scale Dreamer Dynamics Head
 Architecture:
     PatchTST Encoder (pretrained, frozen or finetuned)
     → Latent Projection
-    → Multi-Scale Dynamics (Fast GRU + Slow GRU + Gating)
-    → Patch Decoder
+    → Multi-Scale Dynamics (Fast GRU + Slow GRU + Gating + Residual + LayerNorm)
+    → Cross-Attention to Encoder Features
+    → Deep Patch Decoder (3 layers + residual)
     → Predictions
 """
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from layers.Transformer_EncDec import Encoder, EncoderLayer
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import PatchEmbedding
@@ -18,15 +20,20 @@ from layers.Embed import PatchEmbedding
 
 class MultiScaleDynamics(nn.Module):
     """
-    Multi-time-scale latent dynamics in Dreamer style.
+    Multi-time-scale latent dynamics with learnable step embeddings.
+    Key fix: GRU receives step embeddings as input (not z itself),
+    which lets the GRU distinguish different rollout steps.
     Fast GRU: updates every step (short-term patterns).
     Slow GRU: updates every K steps (long-term trends).
-    Learned gating fuses fast and slow.
+    Learned gating fuses fast and slow, with residual bypass.
     """
 
-    def __init__(self, d_latent, slow_interval=2, dropout=0.1):
+    def __init__(self, d_latent, num_steps, slow_interval=2, dropout=0.1):
         super().__init__()
         self.slow_interval = slow_interval
+
+        # Learnable step embeddings — the "action" signal for each rollout step
+        self.step_embeds = nn.Parameter(torch.randn(num_steps, d_latent) * 0.02)
 
         self.fast_gru = nn.GRUCell(d_latent, d_latent)
         self.slow_gru = nn.GRUCell(d_latent, d_latent)
@@ -35,6 +42,7 @@ class MultiScaleDynamics(nn.Module):
             nn.Linear(d_latent * 2, d_latent),
             nn.Sigmoid(),
         )
+        self.layer_norm = nn.LayerNorm(d_latent)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, z_init, num_steps):
@@ -50,13 +58,19 @@ class MultiScaleDynamics(nn.Module):
         z_seq = []
 
         for t in range(num_steps):
-            z_fast = self.fast_gru(z_fast, z_fast)
+            # Step embedding as GRU input (like "action" in Dreamer)
+            step_emb = self.step_embeds[t].unsqueeze(0).expand(z_fast.shape[0], -1)
+
+            z_fast_new = self.fast_gru(step_emb, z_fast)
 
             if t % self.slow_interval == 0:
-                z_slow = self.slow_gru(z_slow, z_slow)
+                z_slow = self.slow_gru(step_emb, z_slow)
 
-            gate = self.gate(torch.cat([z_fast, z_slow], dim=-1))
-            z_fused = gate * z_fast + (1 - gate) * z_slow
+            gate = self.gate(torch.cat([z_fast_new, z_slow], dim=-1))
+            z_fused = gate * z_fast_new + (1 - gate) * z_slow
+
+            # Residual connection + LayerNorm
+            z_fused = self.layer_norm(z_fused + z_fast)
             z_fused = self.dropout(z_fused)
 
             z_seq.append(z_fused)
@@ -65,42 +79,113 @@ class MultiScaleDynamics(nn.Module):
         return torch.stack(z_seq, dim=1)  # (B, num_steps, d_latent)
 
 
+class CrossAttention(nn.Module):
+    """Cross-attention: dynamics states attend to encoder patch features."""
+
+    def __init__(self, d_latent, d_model, n_heads=4, dropout=0.1):
+        super().__init__()
+        self.n_heads = n_heads
+        self.head_dim = d_latent // n_heads
+
+        self.q_proj = nn.Linear(d_latent, d_latent)
+        self.k_proj = nn.Linear(d_model, d_latent)
+        self.v_proj = nn.Linear(d_model, d_latent)
+        self.out_proj = nn.Linear(d_latent, d_latent)
+        self.layer_norm = nn.LayerNorm(d_latent)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, z_seq, enc_features):
+        """
+        Args:
+            z_seq: (B, num_steps, d_latent) — dynamics states
+            enc_features: (B, patch_num, d_model) — encoder patch features
+        Returns:
+            out: (B, num_steps, d_latent) — attended + residual
+        """
+        B, S, D = z_seq.shape
+        _, P, _ = enc_features.shape
+        H = self.n_heads
+        head_dim = self.head_dim
+
+        Q = self.q_proj(z_seq).view(B, S, H, head_dim).transpose(1, 2)
+        K = self.k_proj(enc_features).view(B, P, H, head_dim).transpose(1, 2)
+        V = self.v_proj(enc_features).view(B, P, H, head_dim).transpose(1, 2)
+
+        attn = torch.matmul(Q, K.transpose(-2, -1)) / (head_dim ** 0.5)
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
+
+        out = torch.matmul(attn, V)
+        out = out.transpose(1, 2).contiguous().view(B, S, D)
+        out = self.out_proj(out)
+
+        # Residual + LayerNorm
+        out = self.layer_norm(out + z_seq)
+        return out
+
+
 class DreamerHead(nn.Module):
     """
-    Dreamer-style prediction head:
-    Latent Projection → Multi-Scale Dynamics rollout → Patch Decoder
+    Dreamer-style prediction head with bounded dynamics steps.
+    Key design: cap GRU rollout at max_steps (default 8) to prevent
+    error accumulation for long prediction horizons.
+    Each step's decoder output size adapts to cover pred_len/num_steps.
     """
+
+    MAX_DYNAMICS_STEPS = 8  # Cap rollout to prevent error accumulation
 
     def __init__(self, n_vars, d_model, patch_num, pred_len, patch_len=16,
                  d_latent=128, slow_interval=2, dropout=0.1):
         super().__init__()
         self.n_vars = n_vars
         self.pred_len = pred_len
-        self.patch_len = patch_len
         self.d_latent = d_latent
+        self.d_model = d_model
+        self.patch_num = patch_num
 
-        # Number of patches to predict
-        self.num_pred_steps = max(1, pred_len // patch_len)
+        # Bounded number of dynamics steps
+        raw_steps = max(1, pred_len // patch_len)
+        self.num_pred_steps = min(raw_steps, self.MAX_DYNAMICS_STEPS)
+        # Each step decodes this many time points
+        self.step_output_len = (pred_len + self.num_pred_steps - 1) // self.num_pred_steps
 
-        # Latent projection: pool encoder output → latent state
+        # Latent projection: encoder patches → initial latent state
         self.to_latent = nn.Sequential(
             nn.Flatten(start_dim=-2),  # (B*nvars, d_model * patch_num)
-            nn.Linear(d_model * patch_num, d_latent),
+            nn.Linear(d_model * patch_num, d_latent * 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(d_latent, d_latent),
+            nn.Linear(d_latent * 2, d_latent),
+            nn.LayerNorm(d_latent),
         )
 
-        # Multi-scale dynamics
-        self.dynamics = MultiScaleDynamics(d_latent, slow_interval, dropout)
+        # Multi-scale dynamics with step embeddings + residual + LayerNorm
+        self.dynamics = MultiScaleDynamics(d_latent, self.num_pred_steps, slow_interval, dropout)
 
-        # Patch decoder: latent → one patch of predictions
-        self.decoder = nn.Sequential(
-            nn.Linear(d_latent, d_latent * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_latent * 2, patch_len),
-        )
+        # Cross-attention: dynamics states attend to encoder features
+        self.cross_attn = CrossAttention(d_latent, d_model, n_heads=4, dropout=dropout)
+
+        # Deep decoder with residual connections
+        self.decoder = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_latent, d_latent * 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_latent * 2, d_latent),
+            ),
+            nn.Sequential(
+                nn.Linear(d_latent, d_latent * 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_latent * 2, d_latent),
+            ),
+        ])
+        self.decoder_norms = nn.ModuleList([
+            nn.LayerNorm(d_latent),
+            nn.LayerNorm(d_latent),
+        ])
+        # Decoder outputs variable-length chunks (adapts to pred_len)
+        self.decoder_out = nn.Linear(d_latent, self.step_output_len)
 
     def forward(self, enc_out):
         """
@@ -114,20 +199,28 @@ class DreamerHead(nn.Module):
         # Reshape to per-variable: (B * nvars, d_model, patch_num)
         x = enc_out.reshape(B * nvars, d_model, patch_num)
 
+        # Save encoder features for cross-attention: (B * nvars, patch_num, d_model)
+        enc_features = x.permute(0, 2, 1)
+
         # Project to latent: (B * nvars, d_latent)
         z_init = self.to_latent(x)
 
-        # Dynamics rollout: (B * nvars, num_pred_steps, d_latent)
+        # Dynamics rollout (bounded steps): (B * nvars, num_pred_steps, d_latent)
         z_seq = self.dynamics(z_init, self.num_pred_steps)
 
-        # Decode each step to a patch: (B * nvars, num_pred_steps, patch_len)
-        patches = self.decoder(z_seq)
+        # Cross-attention to encoder: (B * nvars, num_pred_steps, d_latent)
+        z_seq = self.cross_attn(z_seq, enc_features)
 
-        # Concatenate patches: (B * nvars, num_pred_steps * patch_len)
-        pred = patches.reshape(B * nvars, -1)
+        # Deep decoder with residual connections
+        h = z_seq
+        for layer, norm in zip(self.decoder, self.decoder_norms):
+            h = norm(layer(h) + h)
 
-        # Trim to pred_len
-        pred = pred[:, :self.pred_len]
+        # Each step → step_output_len points: (B*nvars, num_pred_steps, step_output_len)
+        patches = self.decoder_out(h)
+
+        # Concatenate and trim to pred_len
+        pred = patches.reshape(B * nvars, -1)[:, :self.pred_len]
 
         # Reshape back: (B, nvars, pred_len)
         pred = pred.reshape(B, nvars, self.pred_len)
@@ -138,26 +231,31 @@ class DreamerHead(nn.Module):
 # --- Ablation heads ---
 
 class SingleScaleHead(DreamerHead):
-    """Ablation: single GRU, no multi-scale."""
+    """Ablation: single GRU (no multi-scale), but keeps cross-attention, deep decoder, and bounded steps."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         d_latent = self.d_latent
-        # Replace multi-scale with single GRU
-        self.dynamics = SingleScaleDynamics(d_latent, kwargs.get('dropout', 0.1))
+        # Replace multi-scale with single GRU + step embeddings (same bounded steps)
+        self.dynamics = SingleScaleDynamics(d_latent, self.num_pred_steps, kwargs.get('dropout', 0.1))
 
 
 class SingleScaleDynamics(nn.Module):
-    def __init__(self, d_latent, dropout=0.1):
+    def __init__(self, d_latent, num_steps, dropout=0.1):
         super().__init__()
+        self.step_embeds = nn.Parameter(torch.randn(num_steps, d_latent) * 0.02)
         self.gru = nn.GRUCell(d_latent, d_latent)
+        self.layer_norm = nn.LayerNorm(d_latent)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, z_init, num_steps):
         z = z_init
         z_seq = []
-        for _ in range(num_steps):
-            z = self.dropout(self.gru(z, z))
+        for t in range(num_steps):
+            step_emb = self.step_embeds[t].unsqueeze(0).expand(z.shape[0], -1)
+            z_new = self.gru(step_emb, z)
+            z = self.layer_norm(z_new + z)  # residual + norm
+            z = self.dropout(z)
             z_seq.append(z)
         return torch.stack(z_seq, dim=1)
 

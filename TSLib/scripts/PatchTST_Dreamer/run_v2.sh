@@ -1,9 +1,6 @@
 #!/bin/bash
-# Full experiment pipeline for PatchTST-Dreamer
-# Step 1: Train original PatchTST (get encoder weights)
-# Step 2: Train PatchTST-Dreamer (dreamer head, end-to-end finetune)
-# Step 3: Ablation studies
-# Step 4: Baseline comparisons (DLinear, Informer, etc.)
+# V2: Focus on ETT datasets first, skip ECL (column issue)
+# Step 1 ETT baselines already done, start from Step 2
 
 set -e
 cd /home/aiscuser/workspace-gzy/mts-world-model-grid/TSLib
@@ -11,74 +8,15 @@ cd /home/aiscuser/workspace-gzy/mts-world-model-grid/TSLib
 export CUDA_VISIBLE_DEVICES=0
 
 echo "========================================="
-echo "  PatchTST-Dreamer Full Benchmark"
+echo "  PatchTST-Dreamer V2 (Enhanced Head)"
 echo "  Start: $(date)"
 echo "========================================="
 
 # ============================================
-# Step 1: Train original PatchTST as base model
+# Step 2: PatchTST-Dreamer (d_latent=256, cross-attention, deep decoder)
 # ============================================
 echo ""
-echo "===== Step 1: Training PatchTST (base encoder) ====="
-
-for pred_len in 96 192 336 720; do
-    echo "[$(date '+%H:%M:%S')] PatchTST ETTh1 pred=$pred_len"
-    python -u run.py \
-        --task_name long_term_forecast --is_training 1 \
-        --root_path ./dataset/ETT-small/ --data_path ETTh1.csv \
-        --model_id ETTh1_96_${pred_len} --model PatchTST --data ETTh1 \
-        --features M --seq_len 96 --label_len 48 --pred_len $pred_len \
-        --e_layers 1 --d_layers 1 --factor 3 \
-        --enc_in 7 --dec_in 7 --c_out 7 \
-        --d_model 128 --d_ff 256 --n_heads 16 \
-        --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
-
-    echo "[$(date '+%H:%M:%S')] PatchTST ETTh2 pred=$pred_len"
-    python -u run.py \
-        --task_name long_term_forecast --is_training 1 \
-        --root_path ./dataset/ETT-small/ --data_path ETTh2.csv \
-        --model_id ETTh2_96_${pred_len} --model PatchTST --data ETTh2 \
-        --features M --seq_len 96 --label_len 48 --pred_len $pred_len \
-        --e_layers 1 --d_layers 1 --factor 3 \
-        --enc_in 7 --dec_in 7 --c_out 7 \
-        --d_model 128 --d_ff 256 --n_heads 16 \
-        --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
-
-    echo "[$(date '+%H:%M:%S')] PatchTST ETTm1 pred=$pred_len"
-    python -u run.py \
-        --task_name long_term_forecast --is_training 1 \
-        --root_path ./dataset/ETT-small/ --data_path ETTm1.csv \
-        --model_id ETTm1_96_${pred_len} --model PatchTST --data ETTm1 \
-        --features M --seq_len 96 --label_len 48 --pred_len $pred_len \
-        --e_layers 1 --d_layers 1 --factor 3 \
-        --enc_in 7 --dec_in 7 --c_out 7 \
-        --d_model 128 --d_ff 256 --n_heads 16 \
-        --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
-done
-
-for pred_len in 96 192 336 720; do
-    echo "[$(date '+%H:%M:%S')] PatchTST ECL pred=$pred_len"
-    python -u run.py \
-        --task_name long_term_forecast --is_training 1 \
-        --root_path ./dataset/electricity/ --data_path electricity.csv \
-        --model_id ECL_96_${pred_len} --model PatchTST --data custom \
-        --features M --seq_len 96 --label_len 48 --pred_len $pred_len \
-        --e_layers 1 --d_layers 1 --factor 3 \
-        --enc_in 321 --dec_in 321 --c_out 321 \
-        --d_model 128 --d_ff 256 --n_heads 16 \
-        --dropout 0.2 --batch_size 16 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
-done
-
-
-# ============================================
-# Step 2: PatchTST-Dreamer (our method)
-# ============================================
-echo ""
-echo "===== Step 2: Training PatchTST-Dreamer ====="
+echo "===== Step 2: PatchTST-Dreamer (Enhanced) ====="
 
 for pred_len in 96 192 336 720; do
     echo "[$(date '+%H:%M:%S')] PatchTST_Dreamer ETTh1 pred=$pred_len"
@@ -92,7 +30,8 @@ for pred_len in 96 192 336 720; do
         --d_model 128 --d_ff 256 --n_heads 16 \
         --d_latent 256 --slow_interval 2 --head_variant dreamer \
         --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
+        --learning_rate 0.0005 --lradj cosine \
+        --train_epochs 50 --patience 10
 
     echo "[$(date '+%H:%M:%S')] PatchTST_Dreamer ETTh2 pred=$pred_len"
     python -u run.py \
@@ -105,7 +44,8 @@ for pred_len in 96 192 336 720; do
         --d_model 128 --d_ff 256 --n_heads 16 \
         --d_latent 256 --slow_interval 2 --head_variant dreamer \
         --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
+        --learning_rate 0.0005 --lradj cosine \
+        --train_epochs 50 --patience 10
 
     echo "[$(date '+%H:%M:%S')] PatchTST_Dreamer ETTm1 pred=$pred_len"
     python -u run.py \
@@ -118,22 +58,8 @@ for pred_len in 96 192 336 720; do
         --d_model 128 --d_ff 256 --n_heads 16 \
         --d_latent 256 --slow_interval 2 --head_variant dreamer \
         --dropout 0.2 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
-done
-
-for pred_len in 96 192 336 720; do
-    echo "[$(date '+%H:%M:%S')] PatchTST_Dreamer ECL pred=$pred_len"
-    python -u run.py \
-        --task_name long_term_forecast --is_training 1 \
-        --root_path ./dataset/electricity/ --data_path electricity.csv \
-        --model_id ECL_96_${pred_len} --model PatchTST_Dreamer --data custom \
-        --features M --seq_len 96 --label_len 48 --pred_len $pred_len \
-        --e_layers 1 --d_layers 1 --factor 3 \
-        --enc_in 321 --dec_in 321 --c_out 321 \
-        --d_model 128 --d_ff 256 --n_heads 16 \
-        --d_latent 256 --slow_interval 2 --head_variant dreamer \
-        --dropout 0.2 --batch_size 16 --des 'Exp' --itr 1 \
-        --train_epochs 100 --patience 5
+        --learning_rate 0.0005 --lradj cosine \
+        --train_epochs 50 --patience 10
 done
 
 
@@ -209,6 +135,4 @@ echo ""
 echo "========================================="
 echo "  All experiments done!"
 echo "  End: $(date)"
-echo "  Results in: ./results/"
-echo "  Checkpoints in: ./checkpoints/"
 echo "========================================="
