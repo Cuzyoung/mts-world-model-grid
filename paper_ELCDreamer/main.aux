@@ -1,0 +1,55 @@
+\relax 
+\citation{b_grid1}
+\citation{b_transformer}
+\citation{b_patchtst}
+\citation{b_dreamer,b_worldmodel}
+\citation{b_informer}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}\protected@file@percent }
+\citation{b_informer}
+\citation{b_autoformer}
+\citation{b_fedformer}
+\citation{b_patchtst}
+\citation{b_dreamer}
+\citation{b_rnn_attention}
+\citation{b_patchtst}
+\citation{b_informer}
+\citation{b_tslib}
+\citation{b_patchtst}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}Method}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Preliminaries: PatchTST}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}ELCDreamer: World Model Encoder}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Multi-Scale GRU Dynamics}{2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Architecture of ELCDreamer. Each encoder layer replaces PatchTST's bidirectional self-attention with multi-scale GRU dynamics (prior) and cross-attention observation correction (posterior), forming a world-model-inspired encoder.}}{2}\protected@file@percent }
+\newlabel{fig:arch}{{1}{2}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Cross-Attention Observation Correction}{2}\protected@file@percent }
+\citation{b_patchtst}
+\citation{b_patchtst}
+\citation{b_patchtst}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Experiments}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Setup}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Main Results}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Ablation Study}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}1}Component Ablation}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Hyperparameter Sensitivity: Number of Heads}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Discussion}{3}\protected@file@percent }
+\bibcite{b_grid1}{1}
+\bibcite{b_transformer}{2}
+\bibcite{b_patchtst}{3}
+\bibcite{b_dreamer}{4}
+\bibcite{b_worldmodel}{5}
+\bibcite{b_informer}{6}
+\bibcite{b_autoformer}{7}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Multivariate long-term forecasting results with prediction horizons $T\in \{96, 192, 336, 720\}$. \textbf  {Bold}: better of ELCDreamer vs PatchTST (our reproductions under identical $d{=}128$, $L{=}96$ settings). DLinear, FEDformer, Autoformer are cited from \cite  {b_patchtst} under their original settings ($L{=}336$ or best per-dataset) and are not directly comparable---included for reference only. Electricity results: ELCDreamer uses $d{=}128$; PatchTST uses cited values ($d{=}512$, $L{=}336$).}}{4}\protected@file@percent }
+\newlabel{tab:main}{{I}{4}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Controlled Comparison on ETTh1: Same Hyperparameters, Different Attention (MSE, lower is better)}}{4}\protected@file@percent }
+\newlabel{tab:ctrl}{{II}{4}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Component Ablation on ETTh1 (MSE)}}{4}\protected@file@percent }
+\newlabel{tab:ablation}{{III}{4}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Effect of n\_heads on ETTh1 GRU (MSE)}}{4}\protected@file@percent }
+\newlabel{tab:nh}{{IV}{4}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Conclusion}{4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{4}\protected@file@percent }
+\bibcite{b_fedformer}{8}
+\bibcite{b_tslib}{9}
+\bibcite{b_rnn_attention}{10}

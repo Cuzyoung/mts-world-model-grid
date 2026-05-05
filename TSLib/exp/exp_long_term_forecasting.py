@@ -148,10 +148,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 if self.args.use_amp:
                     scaler.scale(loss).backward()
+                    if hasattr(self.args, 'clip_grad') and self.args.clip_grad > 0:
+                        scaler.unscale_(model_optim)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.clip_grad)
                     scaler.step(model_optim)
                     scaler.update()
                 else:
                     loss.backward()
+                    if hasattr(self.args, 'clip_grad') and self.args.clip_grad > 0:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.clip_grad)
                     model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))

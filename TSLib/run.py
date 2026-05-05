@@ -155,7 +155,9 @@ if __name__ == '__main__':
     parser.add_argument('--d_latent', type=int, default=128, help='latent dimension for Dreamer dynamics')
     parser.add_argument('--slow_interval', type=int, default=2, help='slow GRU update interval')
     parser.add_argument('--head_variant', type=str, default='dreamer',
-                        help='head type: dreamer, single_scale, flatten')
+                        help='head type: dreamer, single_scale, flatten, hybrid')
+    parser.add_argument('--clip_grad', type=float, default=0.0,
+                        help='gradient clipping max norm (0 = disabled)')
     parser.add_argument('--freeze_encoder', action='store_true', default=False,
                         help='freeze PatchTST encoder weights')
     parser.add_argument('--pretrained_encoder', type=str, default=None,

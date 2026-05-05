@@ -1,0 +1,76 @@
+% ELCDreamer Architecture Figure — TikZ
+% Usage: \input{fig_arch} inside a figure environment
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.35cm,
+    every node/.style={font=\footnotesize},
+    block/.style={draw, rounded corners=2pt, minimum width=2.8cm, minimum height=0.55cm, align=center, thick},
+    shared/.style={block, fill=gray!15},
+    prior/.style={block, fill=blue!12, draw=blue!60},
+    posterior/.style={block, fill=orange!12, draw=orange!60},
+    bigbox/.style={draw=black!70, thick, rounded corners=4pt, inner sep=6pt},
+    annot/.style={font=\scriptsize\itshape, text=black!60},
+    arr/.style={->, thick, black!70},
+]
+
+% === Main flow (top to bottom) ===
+\node[font=\footnotesize\bfseries] (input) {Input $\mathbf{x} \in \mathbb{R}^L$};
+\node[shared, below=of input] (patch) {Patch + Embed};
+
+% --- Encoder layer internals ---
+% Multi-Scale GRU block with sub-components
+\node[prior, below=0.7cm of patch, minimum width=2.8cm, minimum height=1.4cm] (gru_outer) {};
+
+% Fast and Slow GRU inside
+\node[draw, rounded corners=1pt, fill=blue!22, minimum width=1.1cm, minimum height=0.4cm, font=\scriptsize]
+    at ([xshift=-0.55cm, yshift=0.25cm]gru_outer.center) (fast) {Fast GRU};
+\node[draw, rounded corners=1pt, fill=blue!22, minimum width=1.1cm, minimum height=0.4cm, font=\scriptsize]
+    at ([xshift=0.55cm, yshift=0.25cm]gru_outer.center) (slow) {Slow GRU};
+\node[font=\scriptsize, text=blue!70] at ([yshift=0.02cm]slow.south east) {\tiny$(K{=}2)$};
+
+% Gate + Residual + LN
+\node[draw, rounded corners=1pt, fill=blue!8, minimum width=2.2cm, minimum height=0.32cm, font=\scriptsize]
+    at ([yshift=-0.35cm]gru_outer.center) (gate) {Gate + Res + LN};
+
+% Label on top of GRU block
+\node[font=\scriptsize\bfseries, text=blue!70] at ([yshift=0.0cm]gru_outer.north) {Multi-Scale GRU};
+
+% Arrows inside GRU
+\draw[arr, thin] (fast.south) -- ([xshift=-0.3cm]gate.north);
+\draw[arr, thin] (slow.south) -- ([xshift=0.3cm]gate.north);
+
+% Cross-Attention
+\node[posterior, below=0.35cm of gru_outer] (cross) {Cross-Attention};
+
+% FFN
+\node[shared, below=0.35cm of cross] (ffn) {Feed-Forward Network};
+
+% Encoder layer bounding box
+\node[bigbox, fit=(gru_outer)(cross)(ffn), label={[font=\scriptsize\bfseries, anchor=north west]north west:Encoder Layer $\times L_e$}] (enc) {};
+
+% Flatten head
+\node[shared, below=0.7cm of ffn] (head) {Flatten + Linear Head};
+\node[font=\footnotesize\bfseries, below=0.35cm of head] (output) {$\hat{\mathbf{y}} \in \mathbb{R}^H$};
+
+% === Main arrows ===
+\draw[arr] (input) -- (patch);
+\draw[arr] (patch) -- (gru_outer);
+\draw[arr] (gate.south) -- (cross);
+\draw[arr] (cross) -- (ffn);
+\draw[arr] (ffn) -- (head);
+\draw[arr] (head) -- (output);
+
+% === Z_orig arrow: from patch output to cross-attention K,V ===
+\coordinate (bypass_start) at ([xshift=1.8cm]patch.south);
+\coordinate (bypass_end) at ([xshift=1.8cm]cross.east);
+\draw[arr, dashed, blue!50] (patch.east) -| (bypass_start) |- (cross.east)
+    node[pos=0.5, right, font=\scriptsize, text=black!60] {$\mathbf{Z}_{\mathrm{orig}}$};
+
+% === Right-side annotations (Dreamer analogy) ===
+\node[annot, right=0.6cm of gru_outer, text width=1.8cm, align=left] (a1) {Prior\\(Dynamics\\Transition)};
+\draw[dotted, blue!40] (gru_outer.east) -- (a1.west);
+
+\node[annot, right=0.6cm of cross, text width=1.8cm, align=left] (a2) {Posterior\\(Observation\\Correction)};
+\draw[dotted, orange!50] (cross.east) -- (a2.west);
+
+\end{tikzpicture}

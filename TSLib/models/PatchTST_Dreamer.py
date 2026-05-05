@@ -260,6 +260,66 @@ class SingleScaleDynamics(nn.Module):
         return torch.stack(z_seq, dim=1)
 
 
+class HybridHead(nn.Module):
+    """
+    Hybrid Head: Linear skip + Dreamer dynamics residual.
+    Linear path provides stable baseline prediction (like PatchTST).
+    Dreamer path learns nonlinear residual dynamics.
+    Learnable gate controls the mixing ratio.
+    """
+
+    def __init__(self, n_vars, d_model, patch_num, pred_len, patch_len=16,
+                 d_latent=128, slow_interval=2, dropout=0.1):
+        super().__init__()
+        self.n_vars = n_vars
+        self.pred_len = pred_len
+        self.nf = d_model * patch_num
+
+        # Linear path (identical to PatchTST flatten head)
+        self.linear_head = nn.Sequential(
+            nn.Flatten(start_dim=-2),
+            nn.Linear(self.nf, pred_len),
+            nn.Dropout(dropout),
+        )
+
+        # Dreamer path (for residual learning)
+        self.dreamer_head = DreamerHead(
+            n_vars=n_vars,
+            d_model=d_model,
+            patch_num=patch_num,
+            pred_len=pred_len,
+            patch_len=patch_len,
+            d_latent=d_latent,
+            slow_interval=slow_interval,
+            dropout=dropout,
+        )
+
+        # Learnable gate per variable: how much to trust Dreamer vs Linear
+        self.gate = nn.Sequential(
+            nn.Linear(pred_len * 2, pred_len),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, enc_out):
+        """
+        Args:
+            enc_out: (B, nvars, d_model, patch_num)
+        Returns:
+            pred: (B, nvars, pred_len)
+        """
+        # Linear path: (B, nvars, pred_len)
+        linear_pred = self.linear_head(enc_out)
+
+        # Dreamer path: (B, nvars, pred_len)
+        dreamer_pred = self.dreamer_head(enc_out)
+
+        # Gated fusion
+        gate = self.gate(torch.cat([linear_pred, dreamer_pred], dim=-1))
+        pred = gate * dreamer_pred + (1 - gate) * linear_pred
+
+        return pred
+
+
 class FlattenHead(nn.Module):
     """Original PatchTST head for comparison."""
 
@@ -296,7 +356,7 @@ class Model(nn.Module):
     """
 
     # Supported head variants for ablation
-    HEAD_VARIANTS = ['dreamer', 'single_scale', 'flatten']
+    HEAD_VARIANTS = ['dreamer', 'single_scale', 'flatten', 'hybrid']
 
     def __init__(self, configs, patch_len=16, stride=8):
         super().__init__()
@@ -348,6 +408,17 @@ class Model(nn.Module):
             )
         elif head_variant == 'single_scale':
             self.head = SingleScaleHead(
+                n_vars=configs.enc_in,
+                d_model=configs.d_model,
+                patch_num=patch_num,
+                pred_len=configs.pred_len,
+                patch_len=patch_len,
+                d_latent=d_latent,
+                slow_interval=slow_interval,
+                dropout=configs.dropout,
+            )
+        elif head_variant == 'hybrid':
+            self.head = HybridHead(
                 n_vars=configs.enc_in,
                 d_model=configs.d_model,
                 patch_num=patch_num,

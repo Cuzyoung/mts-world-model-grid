@@ -153,37 +153,43 @@ Our PatchTST (seq_len=96) is 4-25% worse than the paper, confirming the settings
 
 ---
 
-## Improvement Roadmap
+## Experiment Matrix
 
-### Phase 1: Reproduce Paper Baseline (PRIORITY)
+### All Settings
 
-**Goal**: Confirm PatchTST can reproduce paper numbers with correct settings.
+| Setting | seq_len | e_layers | Encoder | Script | Status |
+|---------|---------|----------|---------|--------|--------|
+| **A** (Round 1) | 96 | 1 | Weak | `run_all.sh` | DONE (5W/6L) |
+| **B** (Fair short) | 96 | 3 | Paper-depth | `run_setting_b.sh` | RUNNING (GPU 2) |
+| **C** (Paper full) | 336 | 3 | Paper-full | `run_dreamer_paper_setting.sh` | RUNNING (GPU 1) - FAILING |
+| **D** (Idea iter) | 96 | 3 | Paper-depth | TBD | PLANNED |
 
-```bash
-# Correct settings to match PatchTST/42
---seq_len 336 --e_layers 3 --d_model 128 --n_heads 16 --d_ff 256 \
---dropout 0.2 --batch_size 128 --patch_len 16 --train_epochs 100 --patience 10
-```
+### Setting C Results (seq_len=336, e_layers=3) -- FAILED
 
-Run on: ETTh1, ETTh2, ETTm1, ETTm2, ECL
+Dreamer head completely fails with long lookback. Root cause: seq_len=336 produces ~42 patches, the latent projection flattens all patches into a single vector before GRU rollout. This creates an extremely high-dimensional input that the GRU cannot learn effectively.
 
-**Expected MSE** (from paper):
-| Dataset | 96 | 192 | 336 | 720 |
-|---------|-----|-----|-----|-----|
-| ETTh1 | 0.375 | 0.414 | 0.431 | 0.449 |
-| ETTh2 | 0.274 | 0.339 | 0.331 | 0.379 |
-| ETTm1 | 0.290 | 0.332 | 0.366 | 0.420 |
+| Dataset | pred_len | PatchTST (reproduced) | Dreamer | Delta |
+|---------|----------|----------------------|---------|-------|
+| ETTh1 | 96 | 0.386 | 0.642 | +66% |
+| ETTh1 | 192 | 0.422 | 0.422 | 0% |
+| ETTh1 | 336 | 0.454 | 0.701 | +54% |
+| ETTh1 | 720 | 0.484 | 0.727 | +50% |
 
-### Phase 2: Re-run Dreamer with Correct Settings
+**Conclusion: seq_len=336 is not viable for current Dreamer architecture. Focus on Setting B.**
 
-After confirming PatchTST baseline, re-run PatchTST_Dreamer with:
-- seq_len=336, e_layers=3 (same encoder as paper)
-- d_latent=256, slow_interval=2
-- The longer lookback (336) gives the Dreamer head much richer latent representations
+### Setting B: The Key Experiment (seq_len=96, e_layers=3)
 
-### Phase 3: Address Dreamer Weaknesses
+Fair comparison: both PatchTST and Dreamer use 3 encoder layers (same depth as paper), but shorter lookback where Dreamer works well. This isolates the question: **does the Dreamer head help when the encoder is strong?**
 
-Based on Round 1 observations, potential improvements:
+Results: PENDING
+
+### Setting A Results (Round 1: seq_len=96, e_layers=1)
+
+Dreamer 5W / PatchTST 6L. Dreamer wins at medium horizons (192, 336), loses at short (96) and long (720). See detailed table above.
+
+---
+
+## Improvement Ideas (for Setting D iterations)
 
 **Idea A: Scheduled Sampling / Teacher Forcing for Long Rollouts**
 - Problem: At pred_len=720, GRU rollout (45 steps with patch_len=16) accumulates error
@@ -209,6 +215,11 @@ Based on Round 1 observations, potential improvements:
 - Add a residual linear prediction path alongside the Dreamer rollout
 - Let linear handle the easy part, Dreamer focuses on nonlinear dynamics
 - Expected: More robust across all horizons
+
+**Idea F: Fix Latent Projection for Long Lookback (if revisiting Setting C)**
+- Instead of flattening all 42 patches, use attention pooling or last-K-patches
+- Or: project each patch independently, let GRU attend to patch-level latents
+- This would make Dreamer compatible with seq_len=336
 
 ---
 

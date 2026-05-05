@@ -1,0 +1,112 @@
+% E-TSWM Architecture Figure — Left: Dreamer RSSM, Right: E-TSWM
+% Usage: \input{fig_arch} inside a figure environment
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.4cm,
+    every node/.style={font=\footnotesize},
+    block/.style={draw, rounded corners=2pt, minimum width=2.2cm, minimum height=0.5cm, align=center, thick},
+    rssm/.style={draw, rounded corners=2pt, minimum width=1.6cm, minimum height=0.5cm, align=center, thick},
+    shared/.style={block, fill=gray!15},
+    prior/.style={block, fill=blue!12, draw=blue!60},
+    posterior/.style={block, fill=orange!12, draw=orange!60},
+    rssm_prior/.style={rssm, fill=blue!12, draw=blue!60},
+    rssm_post/.style={rssm, fill=orange!12, draw=orange!60},
+    rssm_shared/.style={rssm, fill=gray!15},
+    bigbox/.style={draw=black!70, thick, rounded corners=4pt, inner sep=6pt},
+    annot/.style={font=\scriptsize\itshape, text=black!60},
+    arr/.style={->, thick, black!70},
+    correspond/.style={<->, dashed, thick, black!40},
+]
+
+% ============ LEFT: Dreamer RSSM ============
+\node[font=\footnotesize\bfseries, text=black!70] (rssm_title) {Dreamer RSSM};
+
+\node[rssm_shared, below=0.5cm of rssm_title] (obs_enc) {CNN Encoder};
+\node[font=\scriptsize, above=0.15cm of obs_enc, text=black!50] {$o_t$};
+
+\node[rssm_prior, below=0.6cm of obs_enc, minimum height=0.7cm] (gru) {GRU};
+\node[font=\scriptsize, text=blue!70, right=0.05cm of gru] {\textit{prior}};
+
+\node[rssm_post, below=0.5cm of gru, minimum height=0.7cm] (rssm_posterior) {MLP Posterior};
+\node[font=\scriptsize, text=orange!70, right=0.05cm of rssm_posterior] {\textit{post.}};
+
+\node[rssm_shared, below=0.5cm of rssm_posterior] (decoder) {MLP Decoder};
+
+% RSSM arrows
+\draw[arr] (obs_enc) -- (gru) node[midway, right, font=\scriptsize] {$e_t$};
+\draw[arr] (gru) -- (rssm_posterior) node[midway, right, font=\scriptsize] {$\hat{h}_t$};
+\draw[arr] (rssm_posterior) -- (decoder) node[midway, right, font=\scriptsize] {$h_t$};
+
+% Recurrent loop
+\draw[arr, blue!50] (gru.west) -- ++(-0.6,0) |- ([yshift=0.5cm]gru.north west) -- ([yshift=0.12cm]gru.north)
+    node[pos=0.25, left, font=\scriptsize, text=blue!50] {$h_{t-1}$};
+
+% Obs bypass to posterior
+\draw[arr, dashed, orange!50] (obs_enc.west) -| ([xshift=-1.0cm]obs_enc.south) |- (rssm_posterior.west)
+    node[pos=0.5, left, font=\scriptsize, text=black!50] {$o_t$};
+
+% RSSM bounding box
+\node[bigbox, fit=(gru)(rssm_posterior), inner sep=8pt, label={[font=\scriptsize, anchor=south, text=black!50]south:$O(T)$ sequential}] (rssm_box) {};
+
+% ============ RIGHT: E-TSWM ============
+\node[font=\footnotesize\bfseries, text=black!70, right=3.5cm of rssm_title] (etswm_title) {E-TSWM (Ours)};
+
+\node[shared, below=0.5cm of etswm_title, minimum width=2.2cm] (patch) {Patch + Embed};
+\node[font=\scriptsize, above=0.15cm of patch, text=black!50] {$\mathbf{x} \in \mathbb{R}^L$};
+
+% Causal Self-Attention with mask
+\node[prior, below=0.6cm of patch, minimum width=2.2cm, minimum height=0.9cm] (causal) {};
+\node[font=\scriptsize\bfseries, text=blue!70] at ([yshift=0.18cm]causal.north) {Causal Self-Attn};
+\node[font=\scriptsize, text=blue!70, right=0.05cm of causal] {\textit{prior}};
+
+% Small mask matrix
+\node[font=\tiny, inner sep=1pt] at ([yshift=-0.1cm]causal.center) {%
+\begin{tikzpicture}[scale=0.2]
+    \foreach \i in {0,...,3} {
+        \foreach \j in {0,...,3} {
+            \pgfmathparse{int(\j <= \i)}
+            \ifnum\pgfmathresult=1
+                \fill[blue!30] (\j,-\i) rectangle (\j+1,-\i-1);
+            \else
+                \fill[red!15] (\j,-\i) rectangle (\j+1,-\i-1);
+            \fi
+            \draw[gray!50, very thin] (\j,-\i) rectangle (\j+1,-\i-1);
+        }
+    }
+\end{tikzpicture}};
+
+% Cross-Attention
+\node[posterior, below=0.5cm of causal, minimum width=2.2cm] (cross) {Cross-Attention};
+\node[font=\scriptsize, text=orange!70, right=0.05cm of cross] {\textit{post.}};
+
+% FFN
+\node[shared, below=0.5cm of cross, minimum width=2.2cm] (ffn) {FFN};
+
+% Encoder layer bounding box
+\node[bigbox, fit=(causal)(cross)(ffn), inner sep=8pt, label={[font=\scriptsize, anchor=south, text=black!50]south:$O(1)$ parallel}] (enc) {};
+
+% Output head
+\node[shared, below=0.7cm of ffn, minimum width=2.2cm] (head) {Flatten + Linear};
+\node[font=\scriptsize, below=0.15cm of head, text=black!50] {$\hat{\mathbf{y}} \in \mathbb{R}^H$};
+
+% E-TSWM arrows
+\draw[arr] (patch) -- (causal);
+\draw[arr] (causal) -- (cross);
+\draw[arr] (cross) -- (ffn);
+\draw[arr] (ffn) -- (head);
+
+% Z_obs bypass arrow
+\draw[arr, dashed, blue!50] (patch.east) -| ([xshift=1.4cm]patch.south) |- (cross.east)
+    node[pos=0.5, right, font=\scriptsize, text=black!50] {$\mathbf{Z}_{\mathrm{obs}}$};
+
+% ============ CORRESPONDENCE ARROWS ============
+\draw[correspond] (obs_enc.east) -- (patch.west)
+    node[midway, above, font=\scriptsize, text=black!40] {encode};
+\draw[correspond] (gru.east) -- (causal.west)
+    node[midway, above, font=\scriptsize, text=black!40] {prior};
+\draw[correspond] (rssm_posterior.east) -- (cross.west)
+    node[midway, above, font=\scriptsize, text=black!40] {posterior};
+\draw[correspond] (decoder.east) -- (head.west)
+    node[midway, above, font=\scriptsize, text=black!40] {decode};
+
+\end{tikzpicture}

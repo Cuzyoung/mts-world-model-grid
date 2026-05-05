@@ -1,0 +1,75 @@
+\relax 
+\citation{b_grid1}
+\citation{b_transformer}
+\citation{b_patchtst}
+\citation{b_dreamer}
+\citation{b_informer}
+\citation{b_electricity}
+\citation{b_patchtst}
+\citation{b_itransformer}
+\citation{b_dlinear}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {II-}0a}Patch-based Transformers.}{1}\protected@file@percent }
+\citation{b_worldmodel}
+\citation{b_dreamer}
+\citation{b_jepa}
+\citation{b_gpt}
+\citation{b_mae}
+\citation{b_timegpt}
+\citation{b_dreamer}
+\citation{b_informer}
+\citation{b_electricity}
+\citation{b_tslib}
+\citation{b_patchtst}
+\citation{b_patchtst}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {II-}0b}World Models.}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {II-}0c}Causal masking beyond language.}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}Method}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Background: PatchTST Encoder}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}E-TSWM: A World-Model Encoder}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Prior: Causal Masked Self-Attention}{2}\protected@file@percent }
+\newlabel{eq:prior}{{2}{2}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Posterior: Observation Cross-Attention}{2}\protected@file@percent }
+\newlabel{eq:posterior}{{4}{2}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Correspondence between Dreamer RSSM and E-TSWM.}}{2}\protected@file@percent }
+\newlabel{tab:wm}{{I}{2}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Correspondence between Dreamer's RSSM (left) and E-TSWM (right). The causal self-attention prior and cross-attention posterior mirror the GRU dynamics and MLP update in Dreamer, but execute in $O(1)$ parallel depth. Blue = prior (dynamics), orange = posterior (correction).}}{2}\protected@file@percent }
+\newlabel{fig:arch}{{1}{2}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}3}Relation to Dreamer's RSSM}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Summary of Architectural Change}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Experiments}{2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Setup}{2}\protected@file@percent }
+\citation{b_patchtst}
+\citation{b_patchtst}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Main Results}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}1}Effectiveness of the Causal Prior}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}2}Limits of the Causal Constraint}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Ablation: Decomposing the World Model}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}1}Prior vs.\ Posterior}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Horizon-Dependent Behaviour}{3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-C}2a}Parallelisability.}{3}\protected@file@percent }
+\bibcite{b_grid1}{1}
+\bibcite{b_transformer}{2}
+\bibcite{b_patchtst}{3}
+\bibcite{b_dreamer}{4}
+\bibcite{b_worldmodel}{5}
+\bibcite{b_informer}{6}
+\bibcite{b_autoformer}{7}
+\bibcite{b_fedformer}{8}
+\bibcite{b_tslib}{9}
+\bibcite{b_dlinear}{10}
+\bibcite{b_gpt}{11}
+\bibcite{b_electricity}{12}
+\bibcite{b_jepa}{13}
+\bibcite{b_mae}{14}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces E-TSWM vs PatchTST on multivariate long-term forecasting (MSE\tmspace  +\thinmuskip {.1667em}/\tmspace  +\thinmuskip {.1667em}MAE, lower is better). $\Delta $\%: relative MSE change (negative = E-TSWM wins). \textbf  {Bold}: better of the two. Both models share the same codebase ($d{=}128$, $L{=}96$, same patch/FFN/head); structural hyperparameters ($L_e$, $n_h$, batch size) are tuned per dataset for each model independently.}}{4}\protected@file@percent }
+\newlabel{tab:main}{{II}{4}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces World-Model Component Ablation on ETTh1 (MSE)}}{4}\protected@file@percent }
+\newlabel{tab:abl_comp}{{III}{4}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces E-TSWM vs PatchTST $\Delta $\% by Horizon (MSE, negative = E-TSWM wins)}}{4}\protected@file@percent }
+\newlabel{tab:horizon}{{IV}{4}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{4}\protected@file@percent }
+\bibcite{b_itransformer}{15}
+\bibcite{b_timegpt}{16}
